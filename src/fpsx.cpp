@@ -120,6 +120,9 @@ fpsx_block read_block_new(FILE* file) {
     fread(&blck.unk1, 1, 1, file);
     fread(&blck.blck_type, 1, 1, file);
 
+    uint64_t temp;
+    fread(&temp, 1, 8, file);
+
     auto crr_pos = ftell(file);
 
     patch_block_header(file, blck);
