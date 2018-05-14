@@ -17,7 +17,8 @@ namespace utils {
     constexpr T mbswap(T num);
 
     constexpr uint16_t mbswap(uint16_t num) {
-        return ((num & 0x00FF) << 8) | ((num & 0xFF00) >> 8);
+        uint32_t temp = ((num & 0x00FF) << 8) | ((num & 0xFF00) >> 8);
+        return (uint16_t)(temp);
     }
 
     constexpr uint32_t mbswap(uint32_t num) {

@@ -93,14 +93,6 @@ void patch_block_header(FILE* file, fpsx_block& blck) {
 
     // If the content type doesn't fall in these cases
     switch (blck_type) {
-        case block_type::block_type_27_rofs_hash: {
-            blck.block_header.t27 = read_block_27(file);
-            blck.block_header.block_readed = 0x27;
-            blck.cnt_size = blck.block_header.t27.size;
-            
-            break;
-        }
-
         case block_type::block_type_28_core_cert: {
             blck.block_header.t28 = read_block_28(file);
             blck.block_header.block_readed = 0x28;
@@ -113,12 +105,42 @@ void patch_block_header(FILE* file, fpsx_block& blck) {
             break;
         }
     }
+
+    
+    blck.block_header.t27 = read_block_27(file);
+    blck.block_header.block_readed = 0x27;
+    blck.cnt_size = blck.block_header.t27.size;        
+}
+
+// Some block has content type first
+fpsx_block read_block_new(FILE* file) {
+    fpsx_block blck;
+
+    fread(&blck.cnt_type, 1, 1, file);
+    fread(&blck.unk1, 1, 1, file);
+    fread(&blck.blck_type, 1, 1, file);
+
+    auto crr_pos = ftell(file);
+
+    patch_block_header(file, blck);
+
+    if (ftell(file) - crr_pos != blck.block_size) {
+        fseek(file, crr_pos + blck.block_size, SEEK_SET);
+    }
+
+    fread(&blck.checksum, 1, 1, file);
+
+    // Again a check
+    blck.cnt_offset = ftell(file);
+
+    return blck;
 }
 
 fpsx_block read_block(FILE* file) {
     fpsx_block blck;
 
     fread(&blck.blck_type, 1, 1, file);
+
     fread(&blck.unk1, 1, 1, file);
     fread(&blck.cnt_type, 1, 1, file);
     fread(&blck.block_size, 1, 1, file);
@@ -146,13 +168,13 @@ fpsx_header read_header(FILE* file) {
     fread(&res.header_size, 1, 4,  file);
     fread(&res.total_block, 1, 4, file);
 
-    res.unk.resize(res.header_size - 4);
-
-    fread(res.unk.data(), 1, res.unk.size(), file);
-
     // Swap bytes order
     res.header_size = utils::mbswap(res.header_size);
     res.total_block = utils::mbswap(res.total_block);
+
+    res.unk.resize(res.header_size - 4);
+
+    fread(res.unk.data(), 1, res.unk.size(), file);
 
     return res;
 }
@@ -169,13 +191,23 @@ std::optional<fpsx> parse_fpsx(const std::string& path) {
     fpsx_file.blcks.resize(fpsx_file.header.total_block);
 
     for (auto& blck: fpsx_file.blcks) {
-        blck = read_block(fpsx_file.handler);
+        uint8_t de;
+
+        fread(&de,1,1, fpsx_file.handler);
+        fseek(fpsx_file.handler, ftell(fpsx_file.handler) - 1, SEEK_SET);
+    
+        if (de == (uint8_t)content_type::data 
+            || de == (uint8_t)content_type::code) {
+            blck = read_block_new(fpsx_file.handler);
+        } else {
+            blck = read_block(fpsx_file.handler);
+        }
     }
 
     return fpsx_file;
 }
 
-bool write_block(FILE* target, FILE* src, fpsx_block blck) {
+bool write_block(FILE* target, FILE* src, fpsx_block& blck, bool first_code) {
     if (target == nullptr || src == nullptr) {
         return false;
     }
@@ -195,7 +227,11 @@ bool write_block(FILE* target, FILE* src, fpsx_block blck) {
         temp.resize(will_read);
 
         readed += fread(temp.data(), 1, will_read, src);
-        wrote += fwrite(temp.data(), 1, will_read, target);
+        
+        if (first_code) {
+            wrote += fwrite(temp.data() + 0xc00, 1, will_read - 0xc00, target);
+            first_code = false;
+        }
     }
 
     if (readed != wrote) {
@@ -224,7 +260,7 @@ bool extract_fpsx(fpsx& file, const std::string& res) {
                 return false;
             }
 
-            if (!write_block(temp, file.handler, blck)) {
+            if (!write_block(temp, file.handler, blck, first_code)) {
                 fclose(temp);
                 return false;
             };
